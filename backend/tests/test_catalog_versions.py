@@ -71,6 +71,43 @@ class CatalogVersionApiTests(unittest.TestCase):
         self.assertIsNotNone(previous)
         self.assertEqual(previous.products[0].nombre, "Alfajor de Dulce de Leche x6")
 
+    def test_get_catalog_returns_the_published_version_and_image_reference(self) -> None:
+        product = self.sample_product(imagen="prod-001.jpg", vigente=False)
+        published_response = self.client.post(
+            "/catalog/versions",
+            json={"products": [product]},
+        )
+
+        response = self.client.get("/catalog")
+
+        self.assertEqual(response.status_code, 200)
+        catalog = response.json()
+        self.assertEqual(catalog["version_id"], published_response.json()["version_id"])
+        self.assertEqual(catalog["created_at"], published_response.json()["created_at"])
+        self.assertEqual(len(catalog["products"]), 1)
+        self.assertEqual(
+            catalog["products"][0],
+            {
+                "codigo": "PROD-001",
+                "nombre": "Alfajor de Dulce de Leche x6",
+                "categoria": "Panadería y Pastelería",
+                "precio": "6500.0",
+                "stock": 24,
+                "imagen": "prod-001.jpg",
+                "vigente": False,
+            },
+        )
+        openapi = self.client.get("/openapi.json").json()
+        catalog_read_contract = openapi["paths"]["/catalog"]["get"]["responses"]
+        self.assertIn("content", catalog_read_contract["200"])
+        self.assertIn("404", catalog_read_contract)
+
+    def test_get_catalog_returns_not_found_when_no_version_is_published(self) -> None:
+        response = self.client.get("/catalog")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "No catalog has been published")
+
     def test_invalid_product_fields_are_rejected(self) -> None:
         invalid_fields = (
             ("codigo", "prod-001"),

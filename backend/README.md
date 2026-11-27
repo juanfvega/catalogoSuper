@@ -76,6 +76,41 @@ La respuesta HTTP `201` contiene el identificador incremental, la fecha de
 creación y la instantánea publicada. Los cuerpos inválidos (incluidos SKU
 duplicados dentro de la misma versión) responden con HTTP `422`.
 
+## Lectura pública del catálogo
+
+`GET /catalog` no requiere autenticación y devuelve la versión actualmente
+publicada con todos sus productos y los campos del contrato (`codigo`, `nombre`,
+`categoria`, `precio`, `stock`, `imagen` y `vigente`). El valor de `imagen` se
+devuelve tal como fue almacenado: puede ser un nombre de archivo o una URL
+HTTPS. Si todavía no hay una versión publicada, la ruta responde HTTP `404`.
+FastAPI publica el contrato de respuesta en OpenAPI.
+
+Ejemplo:
+
+```bash
+curl http://localhost:8000/catalog
+```
+
+Respuesta:
+
+```json
+{
+  "version_id": 1,
+  "created_at": "2026-11-27T18:29:00.000Z",
+  "products": [
+    {
+      "codigo": "PROD-001",
+      "nombre": "Alfajor de Dulce de Leche x6",
+      "categoria": "Panadería y Pastelería",
+      "precio": "6500.0",
+      "stock": 24,
+      "imagen": "prod-001.jpg",
+      "vigente": true
+    }
+  ]
+}
+```
+
 ## Importación de snapshots
 
 `POST /imports` recibe un snapshot completo en `productos` y requiere un token

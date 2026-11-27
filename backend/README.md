@@ -109,6 +109,31 @@ Respuesta:
     }
   ]
 }
+## Imágenes de productos
+
+La integración puede guardar una imagen con `POST /products/{codigo}/image`,
+usando `multipart/form-data` con el campo `image` y el mismo bearer token
+configurado en `IMPORT_API_TOKEN`. Se aceptan JPEG, PNG y WebP de hasta 10 MiB.
+El nombre enviado por el cliente no se utiliza como ruta. La respuesta incluye
+una referencia estable como `/images/PROD-001`; `GET /images/{codigo}` sirve
+esa imagen públicamente, sin autenticación. Cuando el catálogo publica el
+producto con ese código, su campo `imagen` usa esta referencia estable en lugar
+de un enlace externo.
+
+Por defecto, los archivos se guardan en `backend/data/product-images`. Para
+usar un volumen persistente, define `PRODUCT_IMAGE_STORAGE_PATH` con el
+directorio correspondiente:
+
+```bash
+PRODUCT_IMAGE_STORAGE_PATH=/var/lib/catalogo/product-images uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+Ejemplo de carga:
+
+```bash
+curl -X POST http://localhost:8000/products/PROD-001/image \
+  -H 'Authorization: Bearer <IMPORT_API_TOKEN>' \
+  -F 'image=@producto.png'
 ```
 
 ## Importación de snapshots

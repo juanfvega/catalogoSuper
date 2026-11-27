@@ -1,7 +1,9 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 
@@ -103,6 +105,93 @@ class CatalogVersionApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertIsNone(get_published_catalog(self.database_path))
+
+    def test_import_validation_errors_identify_sheet_row_and_field(self) -> None:
+        token = "test-import-token"
+        products = [
+            self.sample_product(),
+            self.sample_product(stock=-1),
+        ]
+
+        with patch.dict(os.environ, {"IMPORT_API_TOKEN": token}):
+            response = self.client.post(
+                "/imports",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"productos": products},
+            )
+
+        self.assertEqual(response.status_code, 422)
+        errors = response.json()["detail"]["errors"]
+        self.assertNotIn("operation_id", response.json())
+        self.assertTrue(
+            any(error["row"] == 3 and error["field"] == "stock" for error in errors)
+        )
+        self.assertIsNone(get_published_catalog(self.database_path))
+
+    def test_duplicate_import_codes_report_each_sheet_row(self) -> None:
+        token = "test-import-token"
+        products = [
+            self.sample_product(),
+            self.sample_product(nombre="Otro producto", precio=0),
+        ]
+
+        with patch.dict(os.environ, {"IMPORT_API_TOKEN": token}):
+            response = self.client.post(
+                "/imports",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"productos": products},
+            )
+
+        self.assertEqual(response.status_code, 422)
+        errors = response.json()["detail"]["errors"]
+        duplicate_code_errors = [
+            error
+            for error in errors
+            if error["field"] == "codigo" and "duplicado" in error["message"]
+        ]
+        self.assertEqual([error["row"] for error in duplicate_code_errors], [2, 3])
+        self.assertTrue(
+            any(error["row"] == 3 and error["field"] == "precio" for error in errors)
+        )
+        self.assertIsNone(get_published_catalog(self.database_path))
+
+    def test_valid_import_returns_operation_id_without_exposing_token(self) -> None:
+        token = "test-import-token"
+        with patch.dict(os.environ, {"IMPORT_API_TOKEN": token}):
+            response = self.client.post(
+                "/imports",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"productos": [self.sample_product()]},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        body = response.json()
+        self.assertEqual(body["status"], "received")
+        UUID(body["operation_id"])
+        self.assertNotIn(token, response.text)
+
+    def test_import_requires_configured_valid_bearer_token(self) -> None:
+        with patch.dict(os.environ, {"IMPORT_API_TOKEN": "configured-token"}):
+            missing_token = self.client.post(
+                "/imports", json={"productos": [self.sample_product()]}
+            )
+            invalid_token = self.client.post(
+                "/imports",
+                headers={"Authorization": "Bearer wrong-token"},
+                json={"productos": [self.sample_product()]},
+            )
+
+        self.assertEqual(missing_token.status_code, 401)
+        self.assertEqual(invalid_token.status_code, 401)
+
+        with patch.dict(os.environ, {"IMPORT_API_TOKEN": ""}):
+            unconfigured = self.client.post(
+                "/imports",
+                headers={"Authorization": "Bearer any-token"},
+                json={"productos": [self.sample_product()]},
+            )
+
+        self.assertEqual(unconfigured.status_code, 503)
 
     def test_supported_images_and_blank_image_are_accepted(self) -> None:
         image_values = (

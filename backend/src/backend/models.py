@@ -1,6 +1,7 @@
 import re
 from datetime import datetime
 from decimal import Decimal
+from typing import TypedDict
 
 from pydantic import (
     BaseModel,
@@ -17,13 +18,20 @@ from pydantic import (
 
 
 _HTTP_URL = TypeAdapter(HttpUrl)
+_PRODUCT_CODE_PATTERN = r"^[A-Z0-9-]{3,20}$"
 _IMAGE_FILENAME = re.compile(r"^[a-z0-9][a-z0-9._-]*\.(?:jpg|jpeg|png|webp)$")
+
+
+class SnapshotValidationError(TypedDict):
+    row: int
+    field: str
+    message: str
 
 
 class Product(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    codigo: str = Field(pattern=r"^[A-Z0-9-]{3,20}$")
+    codigo: str = Field(pattern=_PRODUCT_CODE_PATTERN)
     nombre: str = Field(min_length=3, max_length=100)
     categoria: str = Field(min_length=3, max_length=50)
     precio: Decimal = Field(gt=0, allow_inf_nan=False)
@@ -82,3 +90,49 @@ class CatalogVersionRead(BaseModel):
     version_id: int
     created_at: datetime
     products: list[Product]
+
+
+def validate_import_snapshot(products: list[object]) -> list[SnapshotValidationError]:
+    errors: list[SnapshotValidationError] = []
+    valid_code_rows: dict[str, list[int]] = {}
+
+    for product_index, raw_product in enumerate(products):
+        sheet_row = product_index + 2
+        if isinstance(raw_product, dict):
+            code = raw_product.get("codigo")
+            if isinstance(code, str) and re.fullmatch(_PRODUCT_CODE_PATTERN, code):
+                valid_code_rows.setdefault(code, []).append(sheet_row)
+
+        try:
+            Product.model_validate(raw_product)
+        except ValidationError as validation_error:
+            for error in validation_error.errors():
+                location = error["loc"]
+                field = (
+                    location[0]
+                    if location and isinstance(location[0], str)
+                    else "producto"
+                )
+                errors.append(
+                    {
+                        "row": sheet_row,
+                        "field": field,
+                        "message": error["msg"],
+                    }
+                )
+
+    for code, rows in valid_code_rows.items():
+        if len(rows) < 2:
+            continue
+        duplicate_rows = ", ".join(str(row) for row in rows)
+        for sheet_row in rows:
+            errors.append(
+                {
+                    "row": sheet_row,
+                    "field": "codigo",
+                    "message": f"codigo duplicado en las filas {duplicate_rows}",
+                }
+            )
+
+    errors.sort(key=lambda error: (error["row"], error["field"], error["message"]))
+    return errors

@@ -207,6 +207,37 @@ class CatalogVersionApiTests(unittest.TestCase):
         UUID(body["operation_id"])
         self.assertNotIn(token, response.text)
 
+    def test_import_status_reports_successful_publication(self) -> None:
+        token = "test-import-token"
+        with patch.dict(os.environ, {"IMPORT_API_TOKEN": token}):
+            accepted = self.client.post(
+                "/imports",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"productos": [self.sample_product()]},
+            )
+            status = self.client.get(
+                f"/imports/{accepted.json()['operation_id']}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        self.assertEqual(status.status_code, 200)
+        body = status.json()
+        self.assertEqual(body["status"], "published")
+        self.assertIn("version_id", body)
+        self.assertNotIn("errors", body)
+        self.assertNotIn(token, status.text)
+
+    def test_import_status_requires_authentication_and_returns_not_found(self) -> None:
+        operation_id = UUID("00000000-0000-0000-0000-000000000001")
+        with patch.dict(os.environ, {"IMPORT_API_TOKEN": "configured-token"}):
+            missing = self.client.get(f"/imports/{operation_id}")
+            unknown = self.client.get(
+                f"/imports/{operation_id}",
+                headers={"Authorization": "Bearer configured-token"},
+            )
+        self.assertEqual(missing.status_code, 401)
+        self.assertEqual(unknown.status_code, 404)
+
     def test_import_requires_configured_valid_bearer_token(self) -> None:
         with patch.dict(os.environ, {"IMPORT_API_TOKEN": "configured-token"}):
             missing_token = self.client.post(

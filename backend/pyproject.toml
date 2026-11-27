@@ -9,6 +9,8 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.162.5",
+    "pillow>=12.3.0",
+    "python-multipart>=0.0.32",
 ]
 
 [project.scripts]

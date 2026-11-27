@@ -18,8 +18,9 @@ from pydantic import (
 
 
 _HTTP_URL = TypeAdapter(HttpUrl)
-_PRODUCT_CODE_PATTERN = r"^[A-Z0-9-]{3,20}$"
+PRODUCT_CODE_PATTERN = r"^[A-Z0-9-]{3,20}$"
 _IMAGE_FILENAME = re.compile(r"^[a-z0-9][a-z0-9._-]*\.(?:jpg|jpeg|png|webp)$")
+_IMAGE_PUBLIC_PATH = re.compile(r"^/images/[A-Z0-9-]{3,20}$")
 
 
 class SnapshotValidationError(TypedDict):
@@ -31,7 +32,7 @@ class SnapshotValidationError(TypedDict):
 class Product(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    codigo: str = Field(pattern=_PRODUCT_CODE_PATTERN)
+    codigo: str = Field(pattern=PRODUCT_CODE_PATTERN)
     nombre: str = Field(min_length=3, max_length=100)
     categoria: str = Field(min_length=3, max_length=50)
     precio: Decimal = Field(gt=0, allow_inf_nan=False)
@@ -59,6 +60,9 @@ class Product(BaseModel):
         if value is None:
             return None
 
+        if _IMAGE_PUBLIC_PATH.fullmatch(value):
+            return value
+
         try:
             image_url = _HTTP_URL.validate_python(value)
         except ValidationError:
@@ -71,6 +75,16 @@ class Product(BaseModel):
         if image_url.scheme != "https":
             raise ValueError("la URL de imagen debe usar HTTPS")
         return str(image_url)
+
+    @model_validator(mode="after")
+    def image_reference_matches_product_code(self) -> "Product":
+        if (
+            self.imagen is not None
+            and _IMAGE_PUBLIC_PATH.fullmatch(self.imagen)
+            and self.imagen != f"/images/{self.codigo}"
+        ):
+            raise ValueError("la ruta de imagen debe corresponder al codigo del producto")
+        return self
 
 
 class CatalogVersionCreate(BaseModel):
@@ -100,7 +114,7 @@ def validate_import_snapshot(products: list[object]) -> list[SnapshotValidationE
         sheet_row = product_index + 2
         if isinstance(raw_product, dict):
             code = raw_product.get("codigo")
-            if isinstance(code, str) and re.fullmatch(_PRODUCT_CODE_PATTERN, code):
+            if isinstance(code, str) and re.fullmatch(PRODUCT_CODE_PATTERN, code):
                 valid_code_rows.setdefault(code, []).append(sheet_row)
 
         try:

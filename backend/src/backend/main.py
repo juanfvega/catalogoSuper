@@ -1,11 +1,29 @@
 import os
 import secrets
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, Path, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+
+from backend.image_storage import (
+    MAX_IMAGE_SIZE_BYTES,
+    InvalidProductImage,
+    ProductImageTooLarge,
+    get_product_image,
+    has_product_image,
+    product_image_reference,
+    store_product_image,
+)
+from backend.models import (
+    PRODUCT_CODE_PATTERN,
+    CatalogVersionCreate,
+    CatalogVersionRead,
+    validate_import_snapshot,
+)
+from backend.storage import create_and_publish_catalog
 
 app = FastAPI()
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -18,6 +36,11 @@ class ImportSnapshot(BaseModel):
 class ImportAccepted(BaseModel):
     operation_id: UUID
     status: Literal["received"]
+
+
+class ProductImageStored(BaseModel):
+    codigo: str
+    imagen: str
 
 
 def verify_import_token(
@@ -51,7 +74,56 @@ def read_root():
     status_code=201,
 )
 def create_catalog_version(request: CatalogVersionCreate) -> CatalogVersionRead:
-    return create_and_publish_catalog(request.products)
+    products = [
+        product.model_copy(update={"imagen": product_image_reference(product.codigo)})
+        if has_product_image(product.codigo)
+        else product
+        for product in request.products
+    ]
+    return create_and_publish_catalog(products)
+
+
+@app.post(
+    "/products/{codigo}/image",
+    response_model=ProductImageStored,
+    status_code=201,
+    dependencies=[Depends(verify_import_token)],
+)
+async def upload_product_image(
+    codigo: Annotated[str, Path(pattern=PRODUCT_CODE_PATTERN)],
+    image: Annotated[UploadFile, File()],
+) -> ProductImageStored:
+    try:
+        contents = await image.read(MAX_IMAGE_SIZE_BYTES + 1)
+    finally:
+        await image.close()
+
+    try:
+        reference = store_product_image(codigo, contents)
+    except ProductImageTooLarge as error:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image must not exceed {MAX_IMAGE_SIZE_BYTES} bytes",
+        ) from error
+    except InvalidProductImage as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    return ProductImageStored(codigo=codigo, imagen=reference)
+
+
+@app.get("/images/{codigo}")
+def read_product_image(
+    codigo: Annotated[str, Path(pattern=PRODUCT_CODE_PATTERN)],
+) -> FileResponse:
+    try:
+        path, media_type = get_product_image(codigo)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Product image not found") from error
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.post(

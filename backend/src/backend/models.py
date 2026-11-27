@@ -1,7 +1,8 @@
 import re
 from datetime import datetime
 from decimal import Decimal
-from typing import TypedDict
+from typing import Literal, TypedDict
+from uuid import UUID
 
 from pydantic import (
     BaseModel,
@@ -104,6 +105,14 @@ class CatalogVersionRead(BaseModel):
     version_id: int
     created_at: datetime
     products: list[Product]
+
+
+class ImportOperationRead(BaseModel):
+    operation_id: UUID
+    status: Literal["received", "published", "failed"]
+    version_id: int | None
+    message: str | None
+    created_at: datetime
 
 
 def validate_import_snapshot(products: list[object]) -> list[SnapshotValidationError]:

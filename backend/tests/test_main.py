@@ -1,5 +1,7 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from uuid import UUID
 from unittest.mock import patch
 
@@ -10,7 +12,17 @@ from backend.main import app
 
 class ImportEndpointTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.database_env = patch.dict(
+            os.environ,
+            {"CATALOG_DATABASE_PATH": str(Path(self.temp_dir.name) / "catalog.db")},
+        )
+        self.database_env.start()
         self.client = TestClient(app)
+
+    def tearDown(self) -> None:
+        self.database_env.stop()
+        self.temp_dir.cleanup()
 
     def test_health_route_remains_available(self) -> None:
         response = self.client.get("/")

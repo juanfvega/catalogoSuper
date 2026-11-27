@@ -3,8 +3,9 @@ import sqlite3
 from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
+from uuid import UUID
 
-from backend.models import CatalogVersionRead, Product
+from backend.models import CatalogVersionRead, ImportOperationRead, Product
 
 
 _DEFAULT_DATABASE_PATH = Path(__file__).resolve().parents[2] / "data" / "catalog.db"
@@ -52,6 +53,14 @@ def _initialize_schema(connection: sqlite3.Connection) -> None:
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             published_version_id INTEGER NOT NULL
                 REFERENCES catalog_versions(version_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS import_operations (
+            operation_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK (status IN ('received', 'published', 'failed')),
+            version_id INTEGER REFERENCES catalog_versions(version_id),
+            message TEXT,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         );
         """
     )
@@ -169,3 +178,82 @@ def get_catalog_version(
         if version_row is None:
             return None
         return _version_from_row(connection, version_row)
+
+
+def create_import_operation(
+    operation_id: UUID, database_path: str | Path | None = None
+) -> None:
+    with closing(_connect(database_path)) as connection:
+        _initialize_schema(connection)
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO import_operations (operation_id, status)
+                VALUES (?, 'received')
+                """,
+                (str(operation_id),),
+            )
+
+
+def complete_import_operation(
+    operation_id: UUID,
+    version_id: int,
+    database_path: str | Path | None = None,
+) -> None:
+    with closing(_connect(database_path)) as connection:
+        _initialize_schema(connection)
+        with connection:
+            cursor = connection.execute(
+                """
+                UPDATE import_operations
+                SET status = 'published', version_id = ?, message = NULL
+                WHERE operation_id = ? AND status = 'received'
+                """,
+                (version_id, str(operation_id)),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("No se pudo guardar el resultado de la importación")
+
+
+def fail_import_operation(
+    operation_id: UUID,
+    message: str,
+    database_path: str | Path | None = None,
+) -> None:
+    with closing(_connect(database_path)) as connection:
+        _initialize_schema(connection)
+        with connection:
+            cursor = connection.execute(
+                """
+                UPDATE import_operations
+                SET status = 'failed', message = ?
+                WHERE operation_id = ? AND status = 'received'
+                """,
+                (message, str(operation_id)),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("No se pudo guardar el resultado de la importación")
+
+
+def get_import_operation(
+    operation_id: UUID, database_path: str | Path | None = None
+) -> ImportOperationRead | None:
+    with closing(_connect(database_path)) as connection:
+        _initialize_schema(connection)
+        row = connection.execute(
+            """
+            SELECT operation_id, status, version_id, message, created_at
+            FROM import_operations
+            WHERE operation_id = ?
+            """,
+            (str(operation_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        return ImportOperationRead(
+            operation_id=row["operation_id"],
+            status=row["status"],
+            version_id=row["version_id"],
+            message=row["message"],
+            created_at=row["created_at"],
+        )

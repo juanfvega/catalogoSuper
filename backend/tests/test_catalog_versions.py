@@ -204,39 +204,69 @@ class CatalogVersionApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         body = response.json()
         self.assertEqual(body["status"], "received")
-        UUID(body["operation_id"])
+        operation_id = UUID(body["operation_id"])
         self.assertNotIn(token, response.text)
 
-    def test_import_status_reports_successful_publication(self) -> None:
-        token = "test-import-token"
         with patch.dict(os.environ, {"IMPORT_API_TOKEN": token}):
-            accepted = self.client.post(
+            operation_response = self.client.get(
+                f"/imports/{operation_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        self.assertEqual(operation_response.status_code, 200)
+        operation = operation_response.json()
+        self.assertEqual(operation["status"], "published")
+        self.assertEqual(operation["version_id"], 1)
+        self.assertIsNone(operation["message"])
+        self.assertEqual(self.client.get("/catalog").json()["version_id"], 1)
+
+    def test_failed_publication_is_queryable_with_actionable_message(self) -> None:
+        token = "test-import-token"
+        with (
+            patch.dict(os.environ, {"IMPORT_API_TOKEN": token}),
+            patch(
+                "backend.main.create_and_publish_catalog",
+                side_effect=OSError("database unavailable"),
+            ),
+        ):
+            response = self.client.post(
                 "/imports",
                 headers={"Authorization": f"Bearer {token}"},
                 json={"productos": [self.sample_product()]},
             )
-            status = self.client.get(
-                f"/imports/{accepted.json()['operation_id']}",
+
+        self.assertEqual(response.status_code, 202)
+        operation_id = response.json()["operation_id"]
+        with patch.dict(os.environ, {"IMPORT_API_TOKEN": token}):
+            operation_response = self.client.get(
+                f"/imports/{operation_id}",
                 headers={"Authorization": f"Bearer {token}"},
             )
 
-        self.assertEqual(status.status_code, 200)
-        body = status.json()
-        self.assertEqual(body["status"], "published")
-        self.assertIn("version_id", body)
-        self.assertNotIn("errors", body)
-        self.assertNotIn(token, status.text)
+        self.assertEqual(operation_response.status_code, 200)
+        operation = operation_response.json()
+        self.assertEqual(operation["status"], "failed")
+        self.assertIn("antes de volver a enviar", operation["message"])
+        self.assertIsNone(operation["version_id"])
+        self.assertIsNone(get_published_catalog(self.database_path))
 
-    def test_import_status_requires_authentication_and_returns_not_found(self) -> None:
-        operation_id = UUID("00000000-0000-0000-0000-000000000001")
-        with patch.dict(os.environ, {"IMPORT_API_TOKEN": "configured-token"}):
-            missing = self.client.get(f"/imports/{operation_id}")
-            unknown = self.client.get(
-                f"/imports/{operation_id}",
-                headers={"Authorization": "Bearer configured-token"},
+    def test_import_status_requires_authentication_and_unknown_id_is_not_found(self) -> None:
+        token = "test-import-token"
+        with patch.dict(os.environ, {"IMPORT_API_TOKEN": token}):
+            response = self.client.post(
+                "/imports",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"productos": [self.sample_product()]},
             )
-        self.assertEqual(missing.status_code, 401)
-        self.assertEqual(unknown.status_code, 404)
+            operation_id = response.json()["operation_id"]
+            missing_token = self.client.get(f"/imports/{operation_id}")
+            unknown_operation = self.client.get(
+                f"/imports/{UUID(int=0)}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        self.assertEqual(missing_token.status_code, 401)
+        self.assertEqual(unknown_operation.status_code, 404)
 
     def test_import_requires_configured_valid_bearer_token(self) -> None:
         with patch.dict(os.environ, {"IMPORT_API_TOKEN": "configured-token"}):

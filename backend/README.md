@@ -180,6 +180,41 @@ curl -X POST http://localhost:8000/imports \
 Configura `IMPORT_API_TOKEN` en el entorno del servidor. No lo incluyas en la
 hoja ni en el código fuente.
 
+### Consultar el resultado final
+
+El `202 received` inicial confirma únicamente la recepción del snapshot. La API
+lo publica y conserva un resultado consultable mediante
+`GET /imports/{operation_id}`, usando el mismo bearer token:
+
+```bash
+curl http://localhost:8000/imports/<operation_id> \
+  -H 'Authorization: Bearer <IMPORT_API_TOKEN>'
+```
+
+El estado será `received`, `published` o `failed`. La respuesta incluye
+`version_id` cuando se publicó; en caso de fallo incluye un `message` accionable.
+Las solicitudes rechazadas antes de aceptar la operación responden HTTP `422`
+con los errores por fila y no tienen un `operation_id`.
+
+### Notificaciones desde Apps Script
+
+El archivo [`../apps-script/import-notification.gs`](../apps-script/import-notification.gs)
+se puede copiar al proyecto Apps Script que envía los snapshots. Define estas
+propiedades en **Configuración del proyecto > Propiedades del script**:
+
+| Propiedad | Valor |
+| --- | --- |
+| `IMPORT_API_BASE_URL` | URL base del backend, por ejemplo `https://api.example.com` |
+| `IMPORT_API_TOKEN` | El mismo bearer token configurado en el backend |
+| `RESPONSABLE_EMAIL` | Dirección de correo que recibirá los resultados |
+
+La función `importCatalogSnapshot(productos)` envía el snapshot, consulta el
+resultado por `operation_id` hasta recibir un estado final y usa
+`MailApp.sendEmail()` para notificar publicación, rechazo o fallo. Si vence el
+tiempo de espera, notifica que el resultado sigue pendiente y no lo presenta
+como una publicación exitosa. Autoriza los permisos de Apps Script para
+solicitudes externas y envío de correo al ejecutar la función por primera vez.
+
 ## Entorno de ejecución
 
 `APP_ENV` puede usarse para identificar el entorno de ejecución, por ejemplo

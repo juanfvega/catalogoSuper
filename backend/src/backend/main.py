@@ -1,6 +1,7 @@
 import logging
 import os
 import secrets
+from threading import Lock
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
@@ -60,6 +61,13 @@ class ImportAccepted(BaseModel):
     status: Literal["received"]
 
 
+class ImportStatus(BaseModel):
+    operation_id: UUID
+    status: Literal["received", "published", "rejected", "failed"]
+    version_id: int | str | None = None
+    errors: list[dict[str, Any]] | None = None
+
+
 class ProductImageStored(BaseModel):
     codigo: str
     imagen: str
@@ -90,10 +98,53 @@ def create_app(
     validator: SnapshotValidator | None = None,
 ) -> FastAPI:
     application = FastAPI()
+    import_operations: dict[UUID, ImportStatus] = {}
+    import_operations_lock = Lock()
 
     @application.get("/")
     def read_root():
         return {"status": "ok"}
+
+    @application.post(
+        "/products/{codigo}/image",
+        response_model=ProductImageStored,
+        status_code=201,
+        dependencies=[Depends(verify_import_token)],
+    )
+    async def upload_product_image(
+        codigo: Annotated[str, Path(pattern=PRODUCT_CODE_PATTERN)],
+        image: Annotated[UploadFile, File()],
+    ) -> ProductImageStored:
+        try:
+            contents = await image.read(MAX_IMAGE_SIZE_BYTES + 1)
+        finally:
+            await image.close()
+
+        try:
+            reference = store_product_image(codigo, contents)
+        except ProductImageTooLarge:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Image must not exceed {MAX_IMAGE_SIZE_BYTES} bytes",
+            )
+        except InvalidProductImage as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        return ProductImageStored(codigo=codigo, imagen=reference)
+
+    @application.get("/images/{codigo}")
+    def read_product_image(
+        codigo: Annotated[str, Path(pattern=PRODUCT_CODE_PATTERN)],
+    ) -> FileResponse:
+        try:
+            path, media_type = get_product_image(codigo)
+        except FileNotFoundError as error:
+            raise HTTPException(status_code=404, detail="Product image not found") from error
+        return FileResponse(
+            path,
+            media_type=media_type,
+            headers={"Cache-Control": "no-cache"},
+        )
 
     if store is not None:
         publisher = (
@@ -114,7 +165,6 @@ def create_app(
                 raise HTTPException(status_code=422, detail=error.issues) from error
             return {"version_id": version_id}
     else:
-
         @application.get(
             "/catalog",
             response_model=CatalogVersionRead,

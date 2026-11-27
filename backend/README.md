@@ -151,6 +151,13 @@ Un snapshot válido responde HTTP `202` con un `operation_id` y estado
 `received`. Este acuse confirma la recepción; no significa que el catálogo ya
 esté publicado.
 
+El estado final puede consultarse con
+`GET /imports/{operation_id}`, usando el mismo bearer token. Las respuestas
+pueden tener estado `received`, `published`, `rejected` o `failed`. Una
+operación publicada incluye `version_id`; los estados rechazados o fallidos
+incluyen errores accionables en `errors`. Un identificador desconocido responde
+HTTP `404`.
+
 Ejemplo de llamada:
 
 ```bash

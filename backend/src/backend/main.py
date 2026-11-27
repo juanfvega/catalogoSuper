@@ -1,44 +1,55 @@
-from typing import Any
+import os
+import secrets
+from typing import Any, Literal
+from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
 
-from backend.catalog import (
-    CatalogPublisher,
-    CatalogValidationError,
-    SQLiteCatalogStore,
-    SnapshotValidator,
-    default_catalog_store,
-    validate_snapshot,
+app = FastAPI()
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+class ImportSnapshot(BaseModel):
+    productos: list[dict[str, Any]]
+
+
+class ImportAccepted(BaseModel):
+    operation_id: UUID
+    status: Literal["received"]
+
+
+def verify_import_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> None:
+    expected_token = os.getenv("IMPORT_API_TOKEN")
+    if not expected_token:
+        raise HTTPException(
+            status_code=503,
+            detail="Import authentication is not configured",
+        )
+
+    if credentials is None or not secrets.compare_digest(
+        credentials.credentials, expected_token
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+@app.get("/")
+def read_root():
+    return {"status": "ok"}
+
+
+@app.post(
+    "/imports",
+    status_code=202,
+    response_model=ImportAccepted,
+    dependencies=[Depends(verify_import_token)],
 )
-
-
-def create_app(
-    store: SQLiteCatalogStore | None = None,
-    validator: SnapshotValidator = validate_snapshot,
-) -> FastAPI:
-    publisher = CatalogPublisher(
-        store if store is not None else default_catalog_store(),
-        validator,
-    )
-    app = FastAPI()
-
-    @app.get("/")
-    def read_root() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @app.get("/catalog")
-    def read_catalog() -> dict[str, Any]:
-        return publisher.store.get_published_snapshot()
-
-    @app.post("/catalog/publish", status_code=201)
-    def publish_catalog(products: list[dict[str, Any]]) -> dict[str, str]:
-        try:
-            version_id = publisher.publish(products)
-        except CatalogValidationError as error:
-            raise HTTPException(status_code=422, detail=error.issues) from error
-        return {"version_id": version_id}
-
-    return app
-
-
-app = create_app()
+def receive_import(snapshot: ImportSnapshot) -> ImportAccepted:
+    return ImportAccepted(operation_id=uuid4(), status="received")

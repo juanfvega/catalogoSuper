@@ -1,18 +1,42 @@
-# Backend
+# Backend del catálogo
 
-The backend exposes the currently published catalog at `GET /catalog` and
-accepts complete snapshots at `POST /catalog/publish`.
+API HTTP construida con FastAPI.
 
-Snapshots are stored in SQLite. Set `CATALOG_DATABASE_PATH` to choose the
-database file; it defaults to `backend/catalog.db`.
-Each publish writes a new catalog version and changes the published-version
-reference in the same transaction. A failed write or activation rolls back,
-leaving reads on the previous complete version.
+## Preparar el entorno
 
-The publisher accepts a validator through `create_app(store, validator)`.
-The default validator checks that product data is JSON-serializable. The
-product-field rules from story 6 should be supplied through this validator when
-that story's implementation is available.
+Desde este directorio (`backend/`), instala las dependencias con:
 
-Run the API from this directory with `uv run fastapi dev src/backend/main.py`.
-Run the publication tests with `uv run python -m unittest discover -s tests`.
+```bash
+uv sync
+```
+
+## Iniciar el servidor
+
+Ejecuta la aplicación con Uvicorn:
+
+```bash
+uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+La API queda disponible en `http://localhost:8000`. El comando `uv run backend`
+no inicia el servidor ASGI; actualmente ejecuta una función que solo imprime un
+mensaje.
+
+## Health check
+
+La ruta `GET /` responde con HTTP `200` y:
+
+```json
+{"status": "ok"}
+```
+
+La respuesta indica que el servicio está disponible y no incluye valores de
+configuración.
+
+## Entorno de ejecución
+
+`APP_ENV` puede usarse para identificar el entorno de ejecución, por ejemplo
+`development`, `staging` o `production`. Actualmente la aplicación no lee esta
+variable ni cambia su configuración según su valor; definirla por sí sola no
+altera el comportamiento del servicio. No se debe incluir su valor ni otros
+detalles de configuración en la respuesta del health check.

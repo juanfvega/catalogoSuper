@@ -7,13 +7,6 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from backend.models import (
-    CatalogVersionCreate,
-    CatalogVersionRead,
-    validate_import_snapshot,
-)
-from backend.storage import create_and_publish_catalog
-
 app = FastAPI()
 bearer_scheme = HTTPBearer(auto_error=False)
 

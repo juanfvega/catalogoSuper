@@ -33,6 +33,86 @@ La ruta `GET /` responde con HTTP `200` y:
 La respuesta indica que el servicio está disponible y no incluye valores de
 configuración.
 
+## Persistencia del catálogo
+
+El backend guarda los catálogos en SQLite. Por defecto, la base de datos se crea
+en `backend/data/catalog.db`. Para usar un volumen persistente en otro
+directorio, define `CATALOG_DATABASE_PATH` con la ruta del archivo antes de
+iniciar el servicio:
+
+```bash
+CATALOG_DATABASE_PATH=/var/lib/catalogo/catalog.db uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+`POST /catalog/versions` recibe la lista completa de productos, crea una nueva
+versión incremental y la publica en una transacción. Las versiones anteriores
+se conservan como instantáneas completas. Cada producto requiere `codigo`
+(SKU de 3–20 caracteres A-Z, 0-9 o `-`), `nombre` (3–100 caracteres),
+`categoria` (3–50 caracteres), `precio` mayor que cero, `stock` entero no
+negativo y `vigente` booleano. `imagen` es opcional; si se informa, debe ser un
+nombre de archivo permitido en minúsculas o una URL HTTPS válida. Una imagen
+vacía se almacena como omitida; no se asigna un recurso predeterminado hasta que
+se defina.
+
+Ejemplo:
+
+```bash
+curl -X POST http://localhost:8000/catalog/versions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "products": [{
+      "codigo": "PROD-001",
+      "nombre": "Alfajor de Dulce de Leche x6",
+      "categoria": "Panadería y Pastelería",
+      "precio": 6500.00,
+      "stock": 24,
+      "imagen": "prod-001.jpg",
+      "vigente": true
+    }]
+  }'
+```
+
+La respuesta HTTP `201` contiene el identificador incremental, la fecha de
+creación y la instantánea publicada. Los cuerpos inválidos (incluidos SKU
+duplicados dentro de la misma versión) responden con HTTP `422`.
+
+## Importación de snapshots
+
+`POST /imports` recibe un snapshot completo en `productos` y requiere un token
+Bearer configurado mediante `IMPORT_API_TOKEN`. Los productos se validan contra
+el mismo contrato antes de aceptar la operación. Si hay errores, responde con
+HTTP `422` y un `detail.errors` con `row`, `field` y `message`; los números de
+fila corresponden a Google Sheets, suponiendo encabezados en la fila 1 y el
+primer producto en la fila 2. Los códigos duplicados se informan en todas las
+filas involucradas. Un snapshot inválido no recibe un identificador de
+operación ni inicia publicación.
+
+Un snapshot válido responde HTTP `202` con un `operation_id` y estado
+`received`. Este acuse confirma la recepción; no significa que el catálogo ya
+esté publicado.
+
+Ejemplo de llamada:
+
+```bash
+curl -X POST http://localhost:8000/imports \
+  -H 'Authorization: Bearer <IMPORT_API_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "productos": [{
+      "codigo": "PROD-001",
+      "nombre": "Alfajor de Dulce de Leche x6",
+      "categoria": "Panadería y Pastelería",
+      "precio": 6500.00,
+      "stock": 24,
+      "imagen": "prod-001.jpg",
+      "vigente": true
+    }]
+  }'
+```
+
+Configura `IMPORT_API_TOKEN` en el entorno del servidor. No lo incluyas en la
+hoja ni en el código fuente.
+
 ## Entorno de ejecución
 
 `APP_ENV` puede usarse para identificar el entorno de ejecución, por ejemplo

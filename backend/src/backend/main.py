@@ -12,7 +12,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class ImportSnapshot(BaseModel):
-    productos: list[dict[str, Any]]
+    productos: list[Any]
 
 
 class ImportAccepted(BaseModel):
@@ -46,10 +46,22 @@ def read_root():
 
 
 @app.post(
+    "/catalog/versions",
+    response_model=CatalogVersionRead,
+    status_code=201,
+)
+def create_catalog_version(request: CatalogVersionCreate) -> CatalogVersionRead:
+    return create_and_publish_catalog(request.products)
+
+
+@app.post(
     "/imports",
     status_code=202,
     response_model=ImportAccepted,
     dependencies=[Depends(verify_import_token)],
 )
 def receive_import(snapshot: ImportSnapshot) -> ImportAccepted:
+    errors = validate_import_snapshot(snapshot.productos)
+    if errors:
+        raise HTTPException(status_code=422, detail={"errors": errors})
     return ImportAccepted(operation_id=uuid4(), status="received")
